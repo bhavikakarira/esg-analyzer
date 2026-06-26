@@ -1,0 +1,7 @@
+streamlit
+groq
+pymupdf
+python-dotenv
+plotly
+pandas
+langchain-text-splitters
