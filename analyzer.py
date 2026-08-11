@@ -188,6 +188,8 @@ def query_llm(prompt, chunk):
 
     final_prompt = prompt.replace("<<TEXT>>", chunk)
 
+    last_error = None
+
     for attempt in range(3):
 
         try:
@@ -215,11 +217,16 @@ def query_llm(prompt, chunk):
 
         except Exception as e:
 
+            last_error = e
+
             print(f"Retry {attempt+1}: {e}")
 
             time.sleep(2)
 
-    return {}
+    # Every attempt failed. Raise instead of silently returning {} so the
+    # caller (extract_environmental/social/governance) knows this chunk
+    # produced NO real data, rather than legitimately finding nothing.
+    raise Exception(f"query_llm failed after 3 attempts: {last_error}")
 
 
 # -----------------------------------------------------
@@ -247,113 +254,55 @@ def merge_dict(master, new):
 
 
 # -----------------------------------------------------
-# Environmental Extraction
+# Category Extraction (shared by E / S / G)
 # -----------------------------------------------------
+
+def _extract_category(chunks, keywords, prompt, label):
+
+    result = {}
+    total = 0
+    failures = 0
+    last_error = None
+
+    selected_chunks = best_chunks(chunks, keywords, top_n=12)
+
+    print(f"\n{label} Chunks: {len(selected_chunks)}")
+
+    for chunk in selected_chunks:
+
+        total += 1
+
+        try:
+
+            data = query_llm(prompt, chunk)
+            result = merge_dict(result, data)
+
+        except Exception as e:
+
+            failures += 1
+            last_error = str(e)
+            print(e)
+
+    return result, {
+        "chunks_tried": total,
+        "chunks_failed": failures,
+        "all_failed": total > 0 and failures == total,
+        "last_error": last_error
+    }
+
 
 def extract_environmental(chunks):
-
-    result = {}
-
-    env_chunks = best_chunks(
-        chunks,
-        ENV_KEYWORDS,
-        top_n=12
-    )
-
-    print(f"\nEnvironmental Chunks: {len(env_chunks)}")
-
-    for chunk in env_chunks:
-
-        try:
-
-            data = query_llm(
-                ENV_PROMPT,
-                chunk
-            )
-
-            result = merge_dict(
-                result,
-                data
-            )
-
-        except Exception as e:
-
-            print(e)
-
+    result, _ = _extract_category(chunks, ENV_KEYWORDS, ENV_PROMPT, "Environmental")
     return result
 
-
-# -----------------------------------------------------
-# Social Extraction
-# -----------------------------------------------------
 
 def extract_social(chunks):
-
-    result = {}
-
-    soc_chunks = best_chunks(
-        chunks,
-        SOC_KEYWORDS,
-        top_n=12
-    )
-
-    print(f"\nSocial Chunks: {len(soc_chunks)}")
-
-    for chunk in soc_chunks:
-
-        try:
-
-            data = query_llm(
-                SOC_PROMPT,
-                chunk
-            )
-
-            result = merge_dict(
-                result,
-                data
-            )
-
-        except Exception as e:
-
-            print(e)
-
+    result, _ = _extract_category(chunks, SOC_KEYWORDS, SOC_PROMPT, "Social")
     return result
 
 
-# -----------------------------------------------------
-# Governance Extraction
-# -----------------------------------------------------
-
 def extract_governance(chunks):
-
-    result = {}
-
-    gov_chunks = best_chunks(
-        chunks,
-        GOV_KEYWORDS,
-        top_n=12
-    )
-
-    print(f"\nGovernance Chunks: {len(gov_chunks)}")
-
-    for chunk in gov_chunks:
-
-        try:
-
-            data = query_llm(
-                GOV_PROMPT,
-                chunk
-            )
-
-            result = merge_dict(
-                result,
-                data
-            )
-
-        except Exception as e:
-
-            print(e)
-
+    result, _ = _extract_category(chunks, GOV_KEYWORDS, GOV_PROMPT, "Governance")
     return result
 
 
@@ -365,11 +314,9 @@ def extract_kpis(chunks):
 
     print("\nStarting ESG Extraction...\n")
 
-    environmental = extract_environmental(chunks)
-
-    social = extract_social(chunks)
-
-    governance = extract_governance(chunks)
+    environmental, env_stats = _extract_category(chunks, ENV_KEYWORDS, ENV_PROMPT, "Environmental")
+    social, soc_stats = _extract_category(chunks, SOC_KEYWORDS, SOC_PROMPT, "Social")
+    governance, gov_stats = _extract_category(chunks, GOV_KEYWORDS, GOV_PROMPT, "Governance")
 
     merged = {
 
@@ -377,7 +324,21 @@ def extract_kpis(chunks):
 
         "social": social,
 
-        "governance": governance
+        "governance": governance,
+
+        # Diagnostics so the UI (and you) can tell "genuinely no KPIs in
+        # this report" apart from "every LLM call failed" - these two
+        # currently look identical downstream if you don't track it.
+        "_diagnostics": {
+            "environmental": env_stats,
+            "social": soc_stats,
+            "governance": gov_stats,
+            "all_categories_failed": (
+                env_stats["all_failed"] and
+                soc_stats["all_failed"] and
+                gov_stats["all_failed"]
+            )
+        }
 
     }
 
