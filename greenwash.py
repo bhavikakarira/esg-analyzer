@@ -9,7 +9,7 @@ load_dotenv()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-MODEL = "groq/compound"
+MODEL = "openai/gpt-oss-120b"
 
 GREEN_KEYWORDS = [
     "sustainability", "sustainable", "climate", "environment", "esg",
