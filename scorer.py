@@ -106,6 +106,8 @@ def ai_score(kpis):
         )
     )
 
+    last_error = None
+
     for attempt in range(3):
 
         try:
@@ -132,21 +134,30 @@ def ai_score(kpis):
 
         except Exception as e:
 
+            last_error = e
+
             print(
                 f"Retry {attempt+1}: {e}"
             )
 
             time.sleep(2)
 
-    raise Exception("AI scoring failed.")
+    # Surface the real reason instead of a generic message so the caller
+    # (and the fallback path) knows WHY the AI scoring failed.
+    raise Exception(f"AI scoring failed after 3 attempts: {last_error}")
 # ---------------------------------------------------
 # Helper Functions
 # ---------------------------------------------------
 
-def _fallback_scores(kpis):
+def _fallback_scores(kpis, reason="unknown"):
     """
     Fallback if AI scoring fails.
     Scores are based on disclosure coverage.
+
+    IMPORTANT: this produces the SAME numbers for any report that has
+    empty/near-empty KPI dicts (e.g. because extraction also failed).
+    Callers must treat this as a degraded result, not a real score -
+    it's flagged via fallback_used / fallback_reason below.
     """
 
     env = kpis.get("environmental", {})
@@ -198,7 +209,11 @@ def _fallback_scores(kpis):
 
         "weaknesses": [],
 
-        "recommendations": []
+        "recommendations": [],
+
+        "fallback_used": True,
+
+        "fallback_reason": reason
 
     }
 
@@ -208,6 +223,9 @@ def _fallback_scores(kpis):
 # ---------------------------------------------------
 
 def get_all_scores(kpis):
+
+    fallback_used = False
+    fallback_reason = None
 
     try:
         scores = ai_score(kpis)
@@ -219,7 +237,9 @@ def get_all_scores(kpis):
 
     except Exception as e:
         print(e)
-        scores = _fallback_scores(kpis)
+        fallback_used = True
+        fallback_reason = str(e)
+        scores = _fallback_scores(kpis, reason=fallback_reason)
 
     e = scores.get("environmental", 0)
     s = scores.get("social", 0)
@@ -274,5 +294,7 @@ def get_all_scores(kpis):
         },
         "strengths": scores.get("strengths", []),
         "weaknesses": scores.get("weaknesses", []),
-        "recommendations": scores.get("recommendations", [])
+        "recommendations": scores.get("recommendations", []),
+        "fallback_used": fallback_used,
+        "fallback_reason": fallback_reason
     }
